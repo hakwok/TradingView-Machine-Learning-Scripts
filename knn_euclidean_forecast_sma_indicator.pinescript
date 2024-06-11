@@ -1,0 +1,110 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © hkwo
+//@version=5
+indicator("Machine Learning: kNN Euclidean Forecast SMA", overlay=true, max_lines_count=200, format=format.price, precision=2)
+
+// Machine Learning Inputs
+resolution = input.timeframe('60', 'Resolution', ['1', '3', '5', '10', '15', '30', '45', '60', '120', '180', '240', '480', 'D', 'W', 'M'])
+numDataPoints = input.int(10, '# of Data Points [2:n]', 2)
+numNearestNeighbors = input.int(100, '# of Nearest Neighbors [1:252]', 1, 252)
+adjustPrediction = input.bool(true, 'Adjust Prediction', inline='b')
+nonRepainting = input.bool(true, 'Non-Repainting', inline='b')
+useMachineLearning = input.bool(true, 'Machine Learning', inline='b')
+useEuclideanDistance = input.bool(true, 'Euclidean', inline='b')
+projectionBase = input.source(hlcc4, 'Projection Base')
+
+// Forecast Line Inputs
+evaluationWindowLength = input.int(100, 'Evaluation Window', minval=0, maxval=200)
+forecastWindowLength = input.int(100, 'Forecast Window', minval=1, maxval=200)
+forecastMode = input.string('Similarity', 'Forecast Mode', options=['Similarity', 'Dissimilarity'])
+forecastConstructionMethod = input.string('Cumulative', 'Forecast Construction', options=['Cumulative', 'Mean', 'Linreg'])
+sourceData = input(close)
+forecastColor = input(#f2ff41, 'Forecast Style', inline='fcast_style', group='Style')
+forecastLineStyle = input.string('· · ·', '', options=['──', '- - -', '· · ·'], inline='fcast_style', group='Style')
+
+// kNN Function
+getNearestNeighbors(data) =>
+    nearestNeighbors = array.new_float(0)
+    distances = array.new_float(0)
+
+    for i = 0 to numDataPoints - 1
+        float distance = useEuclideanDistance ? math.sqrt(math.pow(data[i] - data[i + 1], 2)) : math.abs(data[i] - data[i + 1])
+        array.push(distances, distance)
+        int size = array.size(distances)
+        float newNeighbor = distance < array.min(distances, size > numNearestNeighbors ? numNearestNeighbors : 0) ? data[i + 1] : data[i]
+        array.push(nearestNeighbors, newNeighbor)
+
+    nearestNeighbors
+
+// Processing
+repaintingOffset = nonRepainting ? 1 : 0
+[openData, highData, lowData, closeData] = request.security('', resolution, [open, high[repaintingOffset], low[repaintingOffset], close[repaintingOffset]])
+nearestNeighborData = getNearestNeighbors(closeData)
+
+float prediction = array.avg(nearestNeighborData)
+
+// Forecast line
+// Variable Declarations & Initializing Lines
+var forecastLines = array.new_line(0)
+if barstate.isfirst
+    for i = 0 to forecastWindowLength - 1
+        array.push(forecastLines, line.new(na, na, na, na, style=forecastLineStyle == '- - -' ? line.style_dashed : forecastLineStyle == '· · ·' ? line.style_dotted : line.style_solid, color=forecastColor))
+currentIndex = bar_index
+
+// d value inputs
+dataChanges = useMachineLearning ? ta.change(prediction) : ta.change(sourceData)
+
+// Calculate Forecast
+if barstate.islast
+    windowOffset = 0
+    float maxValue = na
+    calculationWindow = array.new_float(0)
+    independentVariable = array.new_int(0)
+
+    // Populate calculation window
+    for i = 0 to forecastWindowLength * 2 + evaluationWindowLength
+        calculationWindow.push(sourceData[i])
+
+        // Populate independent variable array
+        if forecastConstructionMethod == 'Linreg'
+            independentVariable.push(currentIndex[i])
+
+    referenceWindow = calculationWindow.slice(0, forecastWindowLength - 1)
+
+    // Find window to produce forecast
+    for i = 0 to evaluationWindowLength - 1
+        evaluationWindow = calculationWindow.slice(forecastWindowLength + i, forecastWindowLength * 2 + i - 1)
+        correlation = referenceWindow.covariance(evaluationWindow) / (referenceWindow.stdev() * evaluationWindow.stdev())
+
+        // Maximization or minimization problem
+        if forecastMode == 'Similarity'
+            maxValue := correlation >= nz(maxValue, correlation) ? correlation : maxValue
+        else
+            maxValue := correlation <= nz(maxValue, correlation) ? correlation : maxValue
+
+        windowOffset := maxValue == correlation ? i : windowOffset
+
+    // Calcalate Visual
+    previousValue = sourceData
+    currentValue = sourceData
+    for i = 0 to forecastWindowLength - 1
+        forecastValue = dataChanges[forecastWindowLength + windowOffset + (forecastWindowLength - i - 1)]
+
+        // Get forecast point
+        if forecastConstructionMethod == 'Mean'
+            currentValue := array.avg(referenceWindow) + forecastValue
+        else if forecastConstructionMethod == 'Linreg'
+            referenceWindow = calculationWindow.slice(0, forecastWindowLength)
+            xValues = independentVariable.slice(0, forecastWindowLength)
+
+            alpha = referenceWindow.covariance(xValues) / xValues.variance()
+            beta = referenceWindow.avg() - alpha * xValues.avg()
+            currentValue := alpha * (currentIndex + i + 1) + beta + forecastValue
+        else
+            currentValue += forecastValue
+
+        lineObj = forecastLines.get(i)
+        lineObj.set_xy1(currentIndex + i, previousValue)
+        lineObj.set_xy2(currentIndex + i + 1, currentValue)
+
+        previousValue := currentValue
