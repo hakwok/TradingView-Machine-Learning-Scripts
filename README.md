@@ -1,6 +1,6 @@
 # TradingView Machine Learning Scripts and GUI
 
-Scripts by hkwo:
+## Scripts by hkwo
 [kNN ML EMA Ribbon Trend Forecast Strategy](https://www.tradingview.com/script/Ae7HsWpm-kNN-ML-EMA-Ribbon-Trend-Forecast-Strategy/)  
 [Machine Learning: kNN Euclidean Forecast SMA Indicator](https://www.tradingview.com/script/GqgkdNKV-Machine-Learning-kNN-Euclidean-Forecast-SMA-Indicator/)  
 
